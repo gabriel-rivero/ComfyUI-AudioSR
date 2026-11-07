@@ -21,6 +21,25 @@ Native ComfyUI node for **AudioSR (Versatile Audio Super Resolution)** - Upscale
 
 **Based on the original AudioSR implementation by [Haohe Liu](https://github.com/haoheliu) et al.**
 
+---
+
+## New: AudioSR + FlashSR Loader / Sampler
+
+Two nodes are included in addition to the original `AudioSR` node:
+
+- **AudioSR / FlashSR Model Loader** (`AudioSRModelLoader`)
+- **AudioSR / FlashSR Sampler** (`AudioSRSampler`)
+
+```
+Load Audio -> AudioSR / FlashSR Model Loader -> AudioSR / FlashSR Sampler -> Save Audio
+```
+
+- **AudioSR**: use `bf16`, `chunk_size 5.12`, `overlap 1.0` on 8 GB GPUs.
+- **FlashSR**: one-step distilled AudioSR (~9x faster on an RTX 4060 Ti, ~4.9 GB peak VRAM). Uses fixed 5.12 s windows; `overlap` crossfades them.
+- FlashSR weights auto-download to `ComfyUI/models/flashsr/` (3.16 GB) on first use.
+- The original `AudioSR` node remains available with the same continuity and dynamics fixes.
+
+
 ## 🎯 Key Features
 
 - **🎧 Audio Super Resolution**: Upsample low-quality audio to 48kHz with enhanced high frequencies

@@ -29,6 +29,7 @@ progressbar2
 tqdm
 ftfy
 pandas
+psutil
 
 # Text processing
 unidecode
