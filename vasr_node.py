@@ -297,6 +297,21 @@ def generate_spectrogram_comparison(audio_before, sr_before, audio_after, sr_aft
         return None
 
 
+def _rms(x):
+    return float(np.sqrt(np.mean(np.asarray(x, dtype=np.float64) ** 2) + 1e-12))
+
+
+def _match_level(out, ref, lo=0.2, hi=5.0):
+    """Scale chunk output to the reference RMS so per-chunk normalization does not
+    flatten the track's dynamics or make the level jump at chunk boundaries."""
+    o = _rms(out)
+    r = _rms(ref)
+    if o < 1e-6 or r < 1e-5:
+        return out
+    gain = min(max(r / o, lo), hi)
+    return (out * gain).astype(out.dtype, copy=False)
+
+
 class VASRNode:
     """
     Versatile Audio Super Resolution node for ComfyUI.
@@ -631,6 +646,11 @@ class VASRNode:
                         if output_waveform.shape[-1] > target_samples:
                             output_waveform = output_waveform[..., :target_samples]
 
+                        # Restore the chunk's original level (pipeline peak-normalizes to 0.5)
+                        out_np = output_waveform.squeeze(0).cpu().numpy()
+                        out_np = _match_level(out_np, channel)
+                        output_waveform = torch.from_numpy(out_np).unsqueeze(0)
+
                         processed_channels.append(output_waveform)
 
                         # Report progress for this channel
@@ -706,6 +726,10 @@ class VASRNode:
                                 # If still multi-dimensional, flatten
                                 output_chunk_np = output_chunk_np.flatten()
 
+                            # Match this chunk's level to the original input segment so
+                            # normalize_wav's per-chunk peak scaling does not flatten dynamics
+                            output_chunk_np = _match_level(output_chunk_np, channel[orig_start:orig_end])
+
                             # Calculate output position (time-scaled)
                             # Use original (non-padded) boundaries for output positioning
                             out_start = int(orig_start / sr * 48000)
@@ -726,18 +750,20 @@ class VASRNode:
                                 padded[:output_chunk_np.shape[0]] = output_chunk_np
                                 output_chunk_np = padded
 
-                            # Apply fade window for overlap regions BEFORE adding
-                            # This ensures proper amplitude in overlap regions
+                            # Apply Hann fade for overlap regions BEFORE adding.
+                            # Complementary Hann windows sum to 1 and avoid linear-fade clicking.
                             chunk_weights = np.ones(slice_len)
                             if overlap > 0 and i < len(chunks) - 1:
                                 fade_len = min(output_overlap_samples, slice_len)
-                                fade_out = np.linspace(1., 0., fade_len)
+                                t = np.linspace(0.0, 1.0, fade_len, endpoint=False)
+                                fade_out = 0.5 * (1.0 + np.cos(np.pi * t))
                                 output_chunk_np[-fade_len:] *= fade_out
                                 chunk_weights[-fade_len:] *= fade_out
 
                             if overlap > 0 and i > 0:
                                 fade_len = min(output_overlap_samples, slice_len)
-                                fade_in = np.linspace(0., 1., fade_len)
+                                t = np.linspace(0.0, 1.0, fade_len, endpoint=False)
+                                fade_in = 0.5 * (1.0 - np.cos(np.pi * t))
                                 output_chunk_np[:fade_len] *= fade_in
                                 chunk_weights[:fade_len] *= fade_in
 
@@ -774,6 +800,11 @@ class VASRNode:
 
                 # Final validation - must be [channels, samples]
                 assert output_waveform.ndim == 2, f"Output waveform must be 2D [channels, samples], got shape {output_waveform.shape}"
+
+                # Global safety limiter - level matching can push peaks above full scale
+                peak = float(output_waveform.abs().max())
+                if peak > 0.99:
+                    output_waveform = output_waveform * (0.99 / peak)
 
                 # CRITICAL: Add batch dimension for ComfyUI format [batch, channels, samples]
                 output_waveform = output_waveform.unsqueeze(0)

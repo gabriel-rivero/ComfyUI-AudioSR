@@ -82,8 +82,13 @@ def lowpass_filtering_prepare_inference(dl_output):
     if(cutoff_freq < 1000):
         cutoff_freq = 24000
 
+    # Keep the cutoff below Nyquist; scipy's filters require 0 < Wn < 1
+    cutoff_freq = min(cutoff_freq, sampling_rate * 0.499)
+
     order = 8
-    ftype = np.random.choice(["butter", "cheby1", "ellip", "bessel"])
+    # Deterministic filter type: the upstream random choice made adjacent chunks
+    # use different filters, which was audible as timbre jumps between chunks.
+    ftype = "butter"
     filtered_audio = lowpass(
         waveform.numpy().squeeze(),
         highcut=cutoff_freq,
